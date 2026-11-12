@@ -335,9 +335,13 @@ class TcpHostLobby(Lobby):
             self.my_id, self.next_id = 1, 2
             self.players[1] = PlayerInfo(1, self.name)
         self.by_name: dict[str, int] = {}  # networking's client name -> player id
-        self.server = networking.Server("", port, 0, "json", max_players)
+        try:  # networking >= 1.2: per-server hook and a frame size limit
+            self.server = networking.Server("", port, 0, "json", max_players, on_disconnect=self._on_disconnect,
+                                            max_frame=2 * wire.MAX_MESSAGE)
+        except TypeError:  # older networking: module-level hook, no frame limit
+            self.server = networking.Server("", port, 0, "json", max_players)
+            networking.onDisconnect = self._on_disconnect
         self.server.messageFunctions["np"] = self._on_message
-        networking.onDisconnect = self._on_disconnect  # module-level hook in networking
         self.port = port
         self.join_code = f"{local_ip()}:{port}"
         self.announcer = Announcer(name, port)
@@ -405,7 +409,11 @@ class TcpClientLobby(Lobby):
         host, _, port = address.partition(":")
         self._welcome: queue.Queue[wire.Message] = queue.Queue()
         try:
-            self.client = networking.Client(host, int(port or DEFAULT_PORT), 0, "json", debug=0)
+            try:
+                self.client = networking.Client(host, int(port or DEFAULT_PORT), 0, "json", debug=0,
+                                                max_frame=2 * wire.MAX_MESSAGE)
+            except TypeError:  # older networking without max_frame
+                self.client = networking.Client(host, int(port or DEFAULT_PORT), 0, "json", debug=0)
         except OSError as exc:
             raise LobbyError(f"Could not connect to {host}: is the host running and on the same network? ({exc})") from exc
         self.client.messageFunctions["np"] = self._on_message
